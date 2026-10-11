@@ -14,6 +14,7 @@
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 #include "config.h"
+#include "coast.h"
 
 static const size_t TILE_BUF_MAX = 48 * 1024;  // タイル1枚の最大サイズ
 static const char* BASE_URL = "https://www.jma.go.jp/bosai/himawari/data/satimg/";
@@ -61,6 +62,32 @@ static void drawTimestamp(const String& t) {
   int w = tft.textWidth(s, 1) + 8;
   tft.fillRect(0, 0, w, 20, TFT_BLACK);
   tft.drawString(s, 4, 2, 1);
+#endif
+}
+
+// 海岸線を重ねて描画 (Natural Earth の線データを Web メルカトルで画面座標に変換)
+static void drawCoast() {
+#if SHOW_COASTLINE
+  const float worldPx = 256.0f * (float)(1 << HIMAWARI_ZOOM);
+  const int W = tft.width(), H = tft.height();
+  bool havePrev = false;
+  int px = 0, py = 0;
+  for (size_t i = 0; i < COAST_COUNT; i++) {
+    int16_t lo = COAST_PTS[2 * i], la = COAST_PTS[2 * i + 1];
+    if (lo == COAST_SEP) { havePrev = false; continue; }
+    float lon = lo / 100.0f;
+    float sinLat = sinf((la / 100.0f) * (float)DEG_TO_RAD);
+    float gx = (lon + 180.0f) / 360.0f * worldPx;
+    float gy = (0.5f - logf((1.0f + sinLat) / (1.0f - sinLat)) / (4.0f * (float)PI)) * worldPx;
+    int sx = IMAGE_OFFSET_X + (int)lroundf((gx - HIMAWARI_TILE_X0 * 256.0f) / JPG_SCALE);
+    int sy = IMAGE_OFFSET_Y + (int)lroundf((gy - HIMAWARI_TILE_Y0 * 256.0f) / JPG_SCALE);
+    if (havePrev) {
+      bool outside = (sx < 0 && px < 0) || (sx >= W && px >= W) ||
+                     (sy < 0 && py < 0) || (sy >= H && py >= H);
+      if (!outside) tft.drawLine(px, py, sx, sy, COAST_COLOR);
+    }
+    px = sx; py = sy; havePrev = true;
+  }
 #endif
 }
 
@@ -183,6 +210,7 @@ static bool updateImage() {
       TJpgDec.drawJpg(IMAGE_OFFSET_X + c * tilePx, IMAGE_OFFSET_Y + r * tilePx, tileBuf, len);
     }
   }
+  drawCoast();
   if (allOk) {
     shownTime = t;
     drawTimestamp(t);
