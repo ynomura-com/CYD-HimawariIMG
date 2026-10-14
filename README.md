@@ -16,7 +16,43 @@
 * `ZOOM`、`TILE_X0`、`TILE_Y0`、`TILE_COLS`、`TILE_ROWS`、`OFFSET_X`、`OFFSET_Y` で調整できます。
 * フルディスクのズームは 3〜5 です。
 
-## 画面左上に、撮影日時を日本時間で表示する
+### 日本と南太平洋を見る設定
+台風発生の状況などを確認
+```cpp
+// ====== 表示範囲 (フルディスク画像は zoom 3〜5) ======
+// 既定: z=4, x=12..14, y=5..6 → 概ね東経101〜157度 / 北緯22〜53度 (日本付近)
+#define HIMAWARI_ZOOM      4
+#define HIMAWARI_TILE_X0   12
+#define HIMAWARI_TILE_Y0   5
+#define HIMAWARI_TILE_COLS 3
+#define HIMAWARI_TILE_ROWS 3
+
+// JPEG縮小率 (1,2,4,8)。タイル1枚は 256/JPG_SCALE px 四方
+#define JPG_SCALE 2
+
+// 画面左上に対するモザイク画像の位置 (px)
+#define IMAGE_OFFSET_X (-64)
+#define IMAGE_OFFSET_Y (-64)
+```
+### 岩手県を中心とした東北地方の画像を表示する設定
+```cpp
+// ====== 表示範囲 (フルディスク画像は zoom 3〜5) ======
+// 既定: z=4, x=12..14, y=5..6 → 概ね東経101〜157度 / 北緯22〜53度 (日本付近)
+#define HIMAWARI_ZOOM      5
+#define HIMAWARI_TILE_X0   27
+#define HIMAWARI_TILE_Y0   11
+#define HIMAWARI_TILE_COLS 3
+#define HIMAWARI_TILE_ROWS 2
+
+// JPEG縮小率 (1,2,4,8)。タイル1枚は 256/JPG_SCALE px 四方
+#define JPG_SCALE 1
+
+// 画面左上に対するモザイク画像の位置 (px)
+#define IMAGE_OFFSET_X (-236)
+#define IMAGE_OFFSET_Y (-174)
+```
+
+## 画面左上に、撮影日時を日本時間で表示
 （例：2026/10/11 14:30 JST）。
 
 ### 表示のタイミング
