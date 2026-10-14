@@ -1,8 +1,9 @@
-// ひまわり(気象庁) トゥルーカラー再現画像を CYD に画像だけ表示する
+// ひまわり(気象庁) トゥルーカラー再現画像、赤外画像を CYD に画像だけ表示する
 //
 // 画像取得元: 気象庁 防災気象情報 ひまわり画像のタイル
 //   https://www.jma.go.jp/bosai/himawari/data/satimg/targetTimes_fd.json
 //   https://www.jma.go.jp/bosai/himawari/data/satimg/{base}/fd/{valid}/REP/ETC/{z}/{x}/{y}.jpg
+//   https://www.jma.go.jp/bosai/himawari/data/satimg/{base}/fd/{valid}/B13/TBB/{z}/{x}/{y}.jpg
 // タイルは地理院地図と同じ Web メルカトル (z/x/y) 方式。
 // Wi-Fi 等の設定は include/config.h
 
@@ -13,6 +14,8 @@
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 #include "config.h"
 #include "coast.h"
 
@@ -23,6 +26,22 @@ TFT_eSPI tft;
 WiFiClientSecure secureClient;
 uint8_t* tileBuf = nullptr;
 String shownTime = "";
+bool shownIR = false;
+bool showIR = START_IN_IR;       // 現在選択中の画像 (false: トゥルーカラー / true: 赤外)
+
+#if ENABLE_TOUCH
+SPIClass touchSPI(VSPI);
+XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
+#endif
+
+// 赤と青の入れ替わる液晶向けの補正 (DISPLAY_SWAP_RB=1 のとき)
+static inline uint16_t fixColor(uint16_t c) {
+#if DISPLAY_SWAP_RB
+  return (uint16_t)(((c >> 11) & 0x1F) | (c & 0x07E0) | ((c & 0x1F) << 11));
+#else
+  return c;
+#endif
+}
 
 // シリアル(と DEBUG_STATUS=1 のとき画面)に状況を出す
 static void status(const String& s) {
@@ -53,10 +72,10 @@ static String toJstString(const String& t) {
 }
 
 // 画面上部に撮影日時(JST)を表示
-static void drawTimestamp(const String& t) {
+static void drawTimestamp(const String& t, bool ir) {
 #if SHOW_TIMESTAMP
   if (t.length() != 14) return;
-  String s = toJstString(t) + " JST";
+  String s = toJstString(t) + " JST" + (ir ? " IR" : "");
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   int w = tft.textWidth(s, 1) + 8;
@@ -84,7 +103,7 @@ static void drawCoast() {
     if (havePrev) {
       bool outside = (sx < 0 && px < 0) || (sx >= W && px >= W) ||
                      (sy < 0 && py < 0) || (sy >= H && py >= H);
-      if (!outside) tft.drawLine(px, py, sx, sy, COAST_COLOR);
+      if (!outside) tft.drawLine(px, py, sx, sy, fixColor(COAST_COLOR));
     }
     px = sx; py = sy; havePrev = true;
   }
@@ -94,6 +113,9 @@ static void drawCoast() {
 // TJpg_Decoder → TFT 出力 (範囲外は TFT_eSPI::pushImage が自動クリップ)
 static bool tftOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   if (x >= tft.width() || y >= tft.height()) return true;
+#if DISPLAY_SWAP_RB
+  for (uint32_t i = 0; i < (uint32_t)w * h; i++) bitmap[i] = fixColor(bitmap[i]);
+#endif
   tft.pushImage(x, y, w, h, bitmap);
   return true;
 }
@@ -190,19 +212,21 @@ static bool updateImage() {
   status("Checking latest time...");
   String t;
   if (!getLatestTime(t)) return false;
-  if (t == shownTime) {
+  const bool ir = showIR;
+  if (t == shownTime && ir == shownIR) {
     Serial.println("no new image");
-    drawTimestamp(shownTime);    // DEBUG_STATUS で上書きされた分を戻す
+    drawTimestamp(shownTime, shownIR);   // DEBUG_STATUS で上書きされた分を戻す
     return true;
   }
-  status("Latest " + t);
+  Serial.println(String("Latest ") + t + (ir ? " (IR)" : " (color)"));
 
+  const char* layer = ir ? LAYER_IR : LAYER_COLOR;
   const int tilePx = 256 / JPG_SCALE;
   bool allOk = true;
   int n = 0, total = HIMAWARI_TILE_COLS * HIMAWARI_TILE_ROWS;
   for (int r = 0; r < HIMAWARI_TILE_ROWS; r++) {
     for (int c = 0; c < HIMAWARI_TILE_COLS; c++) {
-      String url = String(BASE_URL) + t + "/fd/" + t + "/REP/ETC/" + HIMAWARI_ZOOM + "/" +
+      String url = String(BASE_URL) + t + "/fd/" + t + "/" + layer + "/" + HIMAWARI_ZOOM + "/" +
                    (HIMAWARI_TILE_X0 + c) + "/" + (HIMAWARI_TILE_Y0 + r) + ".jpg";
       status("Tile " + String(++n) + "/" + String(total));
       int len = fetchTile(url);
@@ -213,12 +237,26 @@ static bool updateImage() {
   drawCoast();
   if (allOk) {
     shownTime = t;
-    drawTimestamp(t);
+    shownIR = ir;
+    drawTimestamp(t, ir);
     Serial.println("done: " + t);
   } else {
     status("Some tiles failed");
   }
   return allOk;
+}
+
+// タッチを1回検出したら true (指が離れるまで待つ)
+static bool tapped() {
+#if ENABLE_TOUCH
+  if (!(ts.tirqTouched() && ts.touched())) return false;
+  uint32_t t0 = millis();
+  while (digitalRead(TOUCH_IRQ) == LOW && millis() - t0 < 1500) delay(10);
+  delay(80);                     // チャタリング対策
+  return true;
+#else
+  return false;
+#endif
 }
 
 void setup() {
@@ -231,11 +269,24 @@ void setup() {
 
   tft.init();
   tft.setRotation(1);            // 横向き 320x240 (上下逆なら 3 に)
+  tft.invertDisplay(DISPLAY_INVERT);
   tft.fillScreen(TFT_BLACK);
   status("Display OK");
 
+#if ENABLE_TOUCH
+  touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+  ts.begin(touchSPI);
+  ts.setRotation(1);
+#endif
+
   TJpgDec.setJpgScale(JPG_SCALE);
+#if DISPLAY_SWAP_RB
+  // R/B 入れ替えをソフトで行うため、バイト順の入れ替えは TFT_eSPI 側で行う
+  TJpgDec.setSwapBytes(false);
+  tft.setSwapBytes(true);
+#else
   TJpgDec.setSwapBytes(true);
+#endif
   TJpgDec.setCallback(tftOutput);
 
   secureClient.setInsecure();    // 証明書検証なし (表示専用のため)
@@ -244,8 +295,21 @@ void setup() {
 }
 
 void loop() {
-  bool ok = tileBuf && connectWiFi() && updateImage();
-  Serial.printf("next update in %lu s (free heap %u)\n",
-                (ok ? REFRESH_MS : RETRY_MS) / 1000, ESP.getFreeHeap());
-  delay(ok ? REFRESH_MS : RETRY_MS);
+  static uint32_t nextAt = 0;    // 次に更新する時刻 (millis)
+  static bool force = true;      // 起動直後・タッチ直後は即更新
+
+  if (force || (int32_t)(millis() - nextAt) >= 0) {
+    force = false;
+    bool ok = tileBuf && connectWiFi() && updateImage();
+    uint32_t wait = ok ? REFRESH_MS : RETRY_MS;
+    nextAt = millis() + wait;
+    Serial.printf("next update in %lu s (free heap %u)\n", wait / 1000, ESP.getFreeHeap());
+  }
+
+  if (tapped()) {
+    showIR = !showIR;
+    Serial.println(showIR ? "touch: -> infrared" : "touch: -> true color");
+    force = true;
+  }
+  delay(20);
 }
