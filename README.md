@@ -71,12 +71,10 @@
  気象庁の撮影時刻は UTC なので、+9時間して JST に直しています。例えば 20261011053000 なら 2026/10/11 14:30 JST になります。
 ### 新しい画像がない回
  日時の表示はそのまま残ります。
-### 設定
- `config.h` に `SHOW_TIMESTAMP` を追加しました。日時を消したいときは `0` にしてください。
+### 設定（config.h）
+`SHOW_TIMESTAMP` 日時を消したいときは `0` にしてください。
 ### 日時の位置や文字サイズ、色を変る
 main.cpp の drawTimestamp() の中で調整できます。
-###既定値の変更
- 画像だけの表示にするため、`DEBUG_STATUS` の既定を `0` に変えました。接続状況の確認が必要なときだけ `1` にしてください。
 
 ## 海岸線の表示
 公開データの Natural Earth（パブリックドメイン）の海岸線を軽くして、coast.h にファイルとして埋め込んであります。
@@ -88,3 +86,6 @@ main.cpp の drawTimestamp() の中で調整できます。
 * `SHOW_COASTLINE` を `0` にすると、海岸線を表示しません。
 * `COAST_COLOR` で色を変えられます（例：`TFT_YELLOW、TFT_WHITE`）。
 * 表示範囲を変えても、`HIMAWARI_ZOOM`、`HIMAWARI_TILE_X0`、`HIMAWARI_TILE_Y0`、`IMAGE_OFFSET_X`、`IMAGE_OFFSET_Y` から位置を計算するので、そのまま追従します。
+
+### デバッグ機能(config.h)
+ `DEBUG_STATUS`： `0` 通常。接続状況の確認が必要なときだけ `1` にしてください。
